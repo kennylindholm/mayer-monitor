@@ -7,6 +7,7 @@ from telegram.ext import Updater, CommandHandler, JobQueue
 import logging
 import sqlite3
 from contextlib import contextmanager
+import pytz
 
 # Load environment variables
 load_dotenv()
@@ -25,6 +26,9 @@ logger = logging.getLogger(__name__)
 
 # Database setup
 DB_PATH = os.getenv('DB_PATH', 'mayer_monitor.db')
+
+# Timezone setup
+SWEDISH_TZ = pytz.timezone('Europe/Stockholm')
 
 @contextmanager
 def get_db_connection():
@@ -261,10 +265,13 @@ def toggle_notifications(update, context):
         # Get current state
         db.execute('SELECT enabled FROM notifications WHERE chat_id = ?', (chat_id,))
         result = db.fetchone()
-        current_state = result[0] if result else False
-        
-        # Toggle state
-        new_state = not current_state
+        # Enable notifications by default if user is new
+        if result is None:
+            current_state = False
+            new_state = True
+        else:
+            current_state = result[0]
+            new_state = not current_state
         db.execute('''
             INSERT OR REPLACE INTO notifications (chat_id, enabled, last_notified)
             VALUES (?, ?, datetime('now'))
@@ -314,6 +321,10 @@ def help_command(update, context):
         )
         update.message.reply_text(plain_text)
 
+def get_swedish_time():
+    """Get current time in Swedish timezone"""
+    return datetime.now(SWEDISH_TZ)
+
 def main():
     """
     Main function to run the bot
@@ -339,14 +350,33 @@ def main():
     dispatcher.add_handler(CommandHandler("help", help_command))
     dispatcher.add_handler(CommandHandler("start", help_command))
 
-    # Add daily job to check Mayer Multiple at 00:00 UTC
+    # Enable notifications by default for new users on /start
+    def enable_notify_on_start(update, context):
+        chat_id = update.effective_chat.id
+        with get_db_connection() as conn:
+            db = conn.cursor()
+            db.execute('SELECT enabled FROM notifications WHERE chat_id = ?', (chat_id,))
+            result = db.fetchone()
+            if result is None:
+                db.execute('''
+                    INSERT INTO notifications (chat_id, enabled, last_notified)
+                    VALUES (?, 1, datetime('now'))
+                ''', (chat_id,))
+                conn.commit()
+                logger.info(f"Notifications enabled by default for new chat {chat_id}")
+        help_command(update, context)
+    
+    dispatcher.add_handler(CommandHandler("start", enable_notify_on_start))
+
+    # Add daily job to check Mayer Multiple at 06:00 Swedish time
     job_queue = updater.job_queue
+    swedish_time = datetime.strptime("06:00", "%H:%M").time()
     job_queue.run_daily(
         check_mayer_multiple,
-        time=datetime.strptime("00:00", "%H:%M").time(),
+        time=swedish_time,
         days=(0, 1, 2, 3, 4, 5, 6)  # Run every day
     )
-    logger.info("Scheduled daily Mayer Multiple check for 00:00 UTC")
+    logger.info(f"Scheduled daily Mayer Multiple check for 06:00 {SWEDISH_TZ.zone}")
 
     # Start the Bot
     updater.start_polling()
