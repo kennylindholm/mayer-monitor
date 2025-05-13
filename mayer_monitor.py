@@ -23,11 +23,8 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Store chat IDs that have enabled notifications
-notification_chats = set()
-
 # Database setup
-DB_PATH = 'mayer_monitor.db'
+DB_PATH = os.getenv('DB_PATH', 'mayer_monitor.db')
 
 @contextmanager
 def get_db_connection():
@@ -41,8 +38,8 @@ def get_db_connection():
 def init_db():
     """Initialize the database with required tables"""
     with get_db_connection() as conn:
-        cursor = conn.cursor()
-        cursor.execute('''
+        db = conn.cursor()
+        db.execute('''
             CREATE TABLE IF NOT EXISTS mayer_values (
                 timestamp DATETIME PRIMARY KEY,
                 mayer_multiple REAL,
@@ -50,7 +47,7 @@ def init_db():
                 ma_200 REAL
             )
         ''')
-        cursor.execute('''
+        db.execute('''
             CREATE TABLE IF NOT EXISTS notifications (
                 chat_id INTEGER PRIMARY KEY,
                 enabled BOOLEAN,
@@ -63,8 +60,8 @@ def init_db():
 def store_mayer_value(timestamp, mayer_multiple, price, ma_200):
     """Store a new Mayer Multiple value in the database"""
     with get_db_connection() as conn:
-        cursor = conn.cursor()
-        cursor.execute('''
+        db = conn.cursor()
+        db.execute('''
             INSERT INTO mayer_values (timestamp, mayer_multiple, price, ma_200)
             VALUES (?, ?, ?, ?)
         ''', (timestamp, mayer_multiple, price, ma_200))
@@ -74,14 +71,21 @@ def store_mayer_value(timestamp, mayer_multiple, price, ma_200):
 def get_recent_mayer_values(days=7):
     """Get Mayer Multiple values for the last N days"""
     with get_db_connection() as conn:
-        cursor = conn.cursor()
-        cursor.execute('''
+        db = conn.cursor()
+        db.execute('''
             SELECT mayer_multiple, timestamp
             FROM mayer_values
             WHERE timestamp >= datetime('now', ?)
             ORDER BY timestamp DESC
         ''', (f'-{days} days',))
-        return cursor.fetchall()
+        return db.fetchall()
+
+def get_notification_chats():
+    """Get all chat IDs that have notifications enabled"""
+    with get_db_connection() as conn:
+        db = conn.cursor()
+        db.execute('SELECT chat_id FROM notifications WHERE enabled = 1')
+        return {row[0] for row in db.fetchall()}
 
 def check_sell_condition():
     """
@@ -219,6 +223,7 @@ def check_mayer_multiple(context):
         # Send notifications for BUY signals and confirmed SELL signals
         if signal_type in ["BUY", "SELL"]:
             message = format_message(current_time, mayer_value, current_price, ma_200, signal_text)
+            notification_chats = get_notification_chats()
             for chat_id in notification_chats:
                 try:
                     context.bot.send_message(chat_id=chat_id, text=message, parse_mode='HTML')
@@ -252,21 +257,26 @@ def toggle_notifications(update, context):
     """
     chat_id = update.effective_chat.id
     with get_db_connection() as conn:
-        cursor = conn.cursor()
-        cursor.execute('''
+        db = conn.cursor()
+        # Get current state
+        db.execute('SELECT enabled FROM notifications WHERE chat_id = ?', (chat_id,))
+        result = db.fetchone()
+        current_state = result[0] if result else False
+        
+        # Toggle state
+        new_state = not current_state
+        db.execute('''
             INSERT OR REPLACE INTO notifications (chat_id, enabled, last_notified)
             VALUES (?, ?, datetime('now'))
-        ''', (chat_id, chat_id not in notification_chats))
+        ''', (chat_id, new_state))
         conn.commit()
         
-        if chat_id in notification_chats:
-            notification_chats.remove(chat_id)
-            update.message.reply_text("❌ Notifications disabled")
-            logger.info(f"Notifications disabled for chat {chat_id}")
-        else:
-            notification_chats.add(chat_id)
+        if new_state:
             update.message.reply_text("✅ Notifications enabled - you will receive alerts for BUY/SELL signals")
             logger.info(f"Notifications enabled for chat {chat_id}")
+        else:
+            update.message.reply_text("❌ Notifications disabled")
+            logger.info(f"Notifications disabled for chat {chat_id}")
 
 def help_command(update, context):
     """
@@ -316,12 +326,6 @@ def main():
     
     # Initialize database
     init_db()
-    
-    # Load notification preferences from database
-    with get_db_connection() as conn:
-        cursor = conn.cursor()
-        cursor.execute('SELECT chat_id FROM notifications WHERE enabled = 1')
-        notification_chats.update(row[0] for row in cursor.fetchall())
     
     # Create the Updater
     updater = Updater(TELEGRAM_BOT_TOKEN)
