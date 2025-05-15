@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 
 set -e
 
@@ -6,4 +6,4 @@ set -e
 podman build -t mayer-monitor .
 
 # Run the container with environment variables from .env
-podman run --env-file .env mayer-monitor 
+podman run --env-file .env mayer-monitor
