@@ -1,9 +1,9 @@
-#!/bin/bash
+#!/usr/bin/env bash
 
-set -e
+set -eou pipefail
 
 # Build the container
 podman build -t mayer-monitor .
 
 # Run the container with environment variables from .env
-podman run --env-file .env mayer-monitor 
+podman run --env-file .env mayer-monitor

@@ -34,4 +34,4 @@ The application will check the Mayer Multiple daily at 06:00 Swedish time and se
 - Implement 7-day tracking for SELL signals
 - Add historical data tracking
 - Add configuration options for thresholds
-- Enhance test coverage and add integration tests 
+- Enhance test coverage and add integration tests
