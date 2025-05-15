@@ -1,6 +1,6 @@
-#!/bin/env bash
+#!/usr/bin/env bash
 
-set -e
+set -eou pipefail
 
 # Run the test suite using pytest
 pytest tests/ --maxfail=1 --disable-warnings -v
